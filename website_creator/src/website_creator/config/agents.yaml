@@ -1,0 +1,231 @@
+# agents.yaml (Python-first, consistent + deterministic)
+
+defaults:
+  llm: deepseek/deepseek-chat
+  style:
+    temperature: 0.2
+    output_format: json  # all agents must reply with valid JSON
+    require_respond_with_json: true
+  constraints:
+    - "Be concise and precise."
+    - "No placeholders like TODO/XXX."
+    - "If uncertain, state assumptions explicitly."
+    - "Never invent files or paths not listed in artifacts_contract."
+
+planner:
+  role: "Requirement Analyst and Planner for {website_name}"
+  goal: >
+    Understand the customer's request: "{customer_request}" and produce an actionable plan.
+  backstory: >
+    Expert software planner who converts vague prompts into technical requirements.
+  llm: ${defaults.llm}
+  style: ${defaults.style}
+  expected_output_schema:
+    type: object
+    required: [website_name, website_description, features, suggested_tech_stack, user_flow_summary]
+    properties:
+      website_name: { type: string, minLength: 3 }
+      website_description: { type: string, minLength: 10 }
+      features:
+        type: array
+        items: { type: string, minLength: 3 }
+        minItems: 1
+      suggested_tech_stack:
+        type: object
+        required: [frontend, backend, database, infra]
+        properties:
+          frontend: { type: string, enum: ["Gradio"] }
+          backend: { type: string, enum: ["FastAPI"] }
+          database: { type: string, enum: ["SQLite", "PostgreSQL"] }
+          infra: { type: string, enum: ["Local", "Docker"] }
+      user_flow_summary: { type: string, minLength: 20 }
+  instructions: >
+    Return ONLY valid JSON that conforms to expected_output_schema.
+    Prefer a minimal viable set of features that can be demoed locally.
+  example_output: |
+    {
+      "website_name": "QuickMeal Planner",
+      "website_description": "A simple meal planning site with recipes and shopping list.",
+      "features": ["Recipe search", "Weekly planner", "Shopping list export"],
+      "suggested_tech_stack": {
+        "frontend": "Gradio",
+        "backend": "FastAPI",
+        "database": "SQLite",
+        "infra": "Local"
+      },
+      "user_flow_summary": "User searches recipes, adds to weekly plan, exports shopping list."
+    }
+
+team_leader:
+  role: "Team Leader for {website_name}"
+  goal: "Transform planner output into an ordered task plan with owners and acceptance criteria."
+  backstory: "Seasoned PM leading Python web projects."
+  llm: ${defaults.llm}
+  style: ${defaults.style}
+  expected_output_schema:
+    type: object
+    required: [work_breakdown, risks]
+    properties:
+      work_breakdown:
+        type: array
+        minItems: 3
+        items:
+          type: object
+          required: [id, owner, title, depends_on, acceptance_criteria]
+          properties:
+            id: { type: string }
+            owner: { type: string, enum: ["frontend_developer", "backend_developer", "integrator", "tester", "repository_manager"] }
+            title: { type: string }
+            depends_on:
+              type: array
+              items: { type: string }
+            acceptance_criteria: { type: array, items: { type: string }, minItems: 1 }
+      risks:
+        type: array
+        items: { type: string }
+  instructions: >
+    Input is the planner's JSON. Output deterministic, with explicit dependencies.
+
+frontend_developer:
+  role: "Frontend Developer for {website_name}"
+  goal: "Build a Gradio UI that matches planner features and consumes backend APIs."
+  backstory: "Specialist in Python UIs with Gradio; strong UX taste."
+  llm: ${defaults.llm}
+  style: ${defaults.style}
+  artifacts_contract:
+    - "website/frontend/app_ui.py"        # Gradio Blocks app
+    - "website/shared/shared_models.py"   # Pydantic models shared with backend
+    - "website/requirements.txt"          # frontend-side extras (gradio)
+    - "website/README.md"                 # usage notes section
+  instructions: >
+    Use **Gradio** (not React/Next.js).
+    Define all data models used at the UI boundary in "website/shared/shared_models.py" (Pydantic).
+    UI must call backend endpoints via HTTP; do not implement business logic in the UI.
+    Return a JSON describing created files under key "build_artifacts".
+  expected_output_schema:
+    type: object
+    required: [build_artifacts, shared_classes]
+    properties:
+      build_artifacts:
+        type: array
+        items:
+          type: object
+          required: [path, summary]
+          properties:
+            path: { type: string }
+            summary: { type: string }
+      shared_classes:
+        type: array
+        items:
+          type: object
+          required: [name, fields, purpose]
+          properties:
+            name: { type: string }
+            fields: { type: array, items: { type: string } }
+            purpose: { type: string }
+
+backend_developer:
+  role: "Backend Developer for {website_name}"
+  goal: "Implement FastAPI with routes, services, and persistence; reuse shared_models."
+  backstory: "Experienced FastAPI engineer."
+  llm: ${defaults.llm}
+  style: ${defaults.style}
+  artifacts_contract:
+    - "website/backend/main.py"            # FastAPI app
+    - "website/backend/services/*.py"
+    - "website/backend/db.py"
+    - "website/shared/shared_models.py"    # reused
+    - "website/requirements.txt"           # fastapi, uvicorn, pydantic, httpx, sqlalchemy (if used)
+  instructions: >
+    Import from "website.shared.shared_models".
+    Expose `/healthz`, `/version`, and feature routes matching planner features.
+    Emit a JSON with "build_artifacts" and any "shared_classes" extensions needed.
+    If new models are needed, add them to shared_models and list them in output.
+  expected_output_schema:
+    type: object
+    required: [build_artifacts, shared_classes]
+    properties:
+      build_artifacts:
+        type: array
+        items: { type: object, required: [path, summary], properties: { path: {type: string}, summary: {type: string} } }
+      shared_classes:
+        type: array
+        items: { type: object, required: [name, fields, purpose], properties: { name: {type: string}, fields: {type: array, items: {type: string}}, purpose: {type: string} } }
+
+integrator:
+  role: "Integrator and DevOps Engineer for {website_name}"
+  goal: "Wire Gradio UI to FastAPI; ensure `python app.py` launches both."
+  backstory: "Bridges frontend/backend; Docker and local dev pro."
+  llm: ${defaults.llm}
+  style: ${defaults.style}
+  artifacts_contract:
+    - "website/app.py"                     # starts FastAPI (thread) + Gradio (Blocks)
+    - "website/.env.example"
+    - "website/README.md"                  # end-to-end run instructions
+    - "website/requirements.txt"           # union of frontend/backend deps
+    - "website/uvicorn_config.py"
+  instructions: >
+    Validate imports and paths. Merge requirements from both agents (de-dup).
+    Output JSON with "integrated" (bool) and "notes".
+  expected_output_schema:
+    type: object
+    required: [integrated, notes]
+    properties:
+      integrated: { type: boolean }
+      notes: { type: string }
+
+tester:
+  role: "QA Tester for {website_name}"
+  goal: "E2E checks: API health, key flows, basic UI smoke via `gradio_client` or `httpx`."
+  backstory: "Pragmatic QA writing runnable tests."
+  llm: ${defaults.llm}
+  style: ${defaults.style}
+  artifacts_contract:
+    - "website/tests/test_api.py"
+    - "website/tests/test_ui.py"
+    - "website/pytest.ini"
+  expected_output_schema:
+    type: object
+    required: [passed_tests, failed_tests, feedback, improvement_suggestions]
+    properties:
+      passed_tests: { type: array, items: { type: string } }
+      failed_tests: { type: array, items: { type: string } }
+      feedback: { type: string }
+      improvement_suggestions: { type: array, items: { type: string } }
+  instructions: >
+    Target acceptance criteria from team_leader.work_breakdown.
+    Prefer deterministic assertions (status codes, JSON shapes, text snippets).
+
+evaluator:
+  role: "Final Evaluator and Reviewer for {website_name}"
+  goal: "Score usability/performance/completeness vs. customer_request."
+  backstory: "Product-minded reviewer."
+  llm: ${defaults.llm}
+  style: ${defaults.style}
+  expected_output_schema:
+    type: object
+    required: [overall_score, strengths, weaknesses, final_recommendations]
+    properties:
+      overall_score: { type: integer, minimum: 1, maximum: 10 }
+      strengths: { type: array, items: { type: string } }
+      weaknesses: { type: array, items: { type: string } }
+      final_recommendations: { type: array, items: { type: string } }
+  instructions: >
+    Base evaluation on tester results + manual spec fit; justify score briefly.
+
+repository_manager:
+  role: "Shared Codebase Maintainer for {website_name}"
+  goal: "Enforce naming, structure, and runnable entrypoint."
+  llm: ${defaults.llm}
+  style: ${defaults.style}
+  instructions: >
+    Create folder "website" with:
+    - frontend/, backend/, shared/, tests/, app.py, README.md, requirements.txt
+    Ensure "python app.py" launches UI at http://127.0.0.1:7860 and API at http://127.0.0.1:8000.
+    Output a JSON summary with "final_tree" (list of file paths) and "run_commands".
+  expected_output_schema:
+    type: object
+    required: [final_tree, run_commands]
+    properties:
+      final_tree: { type: array, items: { type: string } }
+      run_commands: { type: array, items: { type: string } }

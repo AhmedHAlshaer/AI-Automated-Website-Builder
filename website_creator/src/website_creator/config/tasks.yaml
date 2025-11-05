@@ -1,0 +1,232 @@
+# tasks.yaml (deterministic, JSON-first, Python-only stack)
+
+defaults:
+  require_json: true
+  constraints:
+    - "Respond ONLY with valid JSON per expected_output_schema."
+    - "No placeholders (TODO/XXX)."
+    - "Use the pinned stack: Gradio (UI), FastAPI (API), Pydantic (models)."
+    - "All files must live under ./website/."
+
+planner_task:
+  id: "planner_task"
+  depends_on: []
+  agent: planner
+  description: >
+    Analyze "{customer_request}" and produce a concrete, minimal plan.
+  expected_output_schema:
+    type: object
+    required: [website_name, website_description, features, suggested_tech_stack, user_flow_summary]
+    properties:
+      website_name: { type: string, minLength: 3 }
+      website_description: { type: string, minLength: 10 }
+      features: { type: array, minItems: 1, items: { type: string, minLength: 3 } }
+      suggested_tech_stack:
+        type: object
+        required: [frontend, backend, database, infra]
+        properties:
+          frontend: { type: string, enum: ["Gradio"] }
+          backend: { type: string, enum: ["FastAPI"] }
+          database: { type: string, enum: ["SQLite", "PostgreSQL"] }
+          infra: { type: string, enum: ["Local", "Docker"] }
+      user_flow_summary: { type: string, minLength: 20 }
+  acceptance_criteria:
+    - "Features list is actionable and non-empty."
+    - "Stack equals Gradio + FastAPI."
+    - "User flow covers primary interactions end-to-end."
+  callback: >
+    If any required fields are missing or vague, regenerate with explicit assumptions.
+
+team_leader_task:
+  id: "team_leader_task"
+  depends_on: ["planner_task"]
+  agent: team_leader
+  description: >
+    Convert planner output into an ordered plan with owners, deps, and acceptance criteria.
+  expected_output_schema:
+    type: object
+    required: [work_breakdown, quality_guidelines]
+    properties:
+      work_breakdown:
+        type: array
+        minItems: 5
+        items:
+          type: object
+          required: [id, owner, title, depends_on, acceptance_criteria]
+          properties:
+            id: { type: string }
+            owner: { type: string, enum: ["frontend_developer", "backend_developer", "integrator", "tester", "repository_manager"] }
+            title: { type: string }
+            depends_on: { type: array, items: { type: string } }
+            acceptance_criteria: { type: array, items: { type: string }, minItems: 1 }
+      quality_guidelines:
+        type: object
+        required: [naming, code_style, api_conventions]
+        properties:
+          naming: { type: string }
+          code_style: { type: string }
+          api_conventions: { type: string }
+  acceptance_criteria:
+    - "Each task has clear deps and ≥1 acceptance criterion."
+    - "Quality guidelines include versioned dependencies and doc expectations."
+  callback: >
+    If conflicts with planner exist, document adjustments explicitly.
+
+frontend_developer_task:
+  id: "frontend_developer_task"
+  depends_on: ["planner_task", "team_leader_task"]
+  agent: frontend_developer
+  description: >
+    Build Gradio UI; define shared Pydantic models in shared_models.py; no business logic in UI.
+  artifacts_contract:
+    - "website/frontend/app_ui.py"
+    - "website/shared/shared_models.py"
+    - "website/requirements.frontend.txt"
+    - "website/README.md"
+  expected_output_schema:
+    type: object
+    required: [build_artifacts, shared_classes]
+    properties:
+      build_artifacts:
+        type: array
+        items:
+          type: object
+          required: [path, summary]
+          properties:
+            path: { type: string }
+            summary: { type: string }
+      shared_classes:
+        type: array
+        items:
+          type: object
+          required: [name, fields, purpose]
+          properties:
+            name: { type: string }
+            fields: { type: array, items: { type: string } }
+            purpose: { type: string }
+  acceptance_criteria:
+    - "Gradio Blocks app with top-level launch function."
+    - "All request/response payloads use shared_models.py."
+    - "No network calls hardcoded to localhost ports without env fallback."
+  callback: >
+    If UI doesn’t map to features or lacks responsiveness, refine and re-output.
+
+backend_developer_task:
+  id: "backend_developer_task"
+  depends_on: ["planner_task", "team_leader_task", "frontend_developer_task"]
+  agent: backend_developer
+  description: >
+    Implement FastAPI with routes aligned to features; reuse shared_models.py.
+  artifacts_contract:
+    - "website/backend/main.py"
+    - "website/backend/services/__init__.py"
+    - "website/backend/services/core.py"
+    - "website/backend/db.py"
+    - "website/requirements.backend.txt"
+  expected_output_schema:
+    type: object
+    required: [build_artifacts, shared_classes]
+    properties:
+      build_artifacts:
+        type: array
+        items: { type: object, required: [path, summary], properties: { path: {type: string}, summary: {type: string} } }
+      shared_classes:
+        type: array
+        items: { type: object, required: [name, fields, purpose], properties: { name: {type: string}, fields: {type: array, items: {type: string}}, purpose: {type: string} } }
+  acceptance_criteria:
+    - "Expose /healthz and /version."
+    - "Feature routes accept/return shared models."
+    - "App runs with `uvicorn website.backend.main:app`."
+  callback: >
+    If models diverge from shared_models.py or endpoints mismatch UI flows, refactor and re-output.
+
+integration_task:
+  id: "integration_task"
+  depends_on: ["frontend_developer_task", "backend_developer_task"]
+  agent: integrator
+  description: >
+    Merge artifacts; produce unified runner; reconcile requirements.
+  artifacts_contract:
+    - "website/app.py"
+    - "website/.env.example"
+    - "website/requirements.txt"
+    - "website/uvicorn_config.py"
+    - "website/README.md"
+  expected_output_schema:
+    type: object
+    required: [merged_file_structure, app_launcher, integration_log, unified_requirements]
+    properties:
+      merged_file_structure: { type: array, items: { type: string } }
+      app_launcher: { type: string, minLength: 10 }
+      integration_log: { type: string }
+      unified_requirements: { type: array, items: { type: string } }
+  acceptance_criteria:
+    - "`python website/app.py` starts API (port 8000) and UI (port 7860)."
+    - "requirements.txt is deduplicated and pinned."
+    - ".env.example documents required vars."
+  callback: >
+    If imports/ports/env mismatch, fix and re-output with updated log.
+
+repository_management_task:
+  id: "repository_management_task"
+  depends_on: ["integration_task"]
+  agent: repository_manager
+  description: >
+    Ensure final tree, consistency, and runnable instructions.
+  expected_output_schema:
+    type: object
+    required: [final_directory, readme_file, verification_report, run_commands]
+    properties:
+      final_directory: { type: array, items: { type: string } }
+      readme_file: { type: string, minLength: 20 }
+      verification_report: { type: string }
+      run_commands: { type: array, items: { type: string } }
+  acceptance_criteria:
+    - "All referenced files exist and import cleanly."
+    - "README includes quickstart + troubleshooting."
+  callback: >
+    If any file missing/inconsistent, reconstruct from prior artifacts and re-verify.
+
+testing_task:
+  id: "testing_task"
+  depends_on: ["repository_management_task"]
+  agent: tester
+  description: >
+    E2E tests for API and basic UI; assert acceptance criteria from team leader.
+  artifacts_contract:
+    - "website/tests/test_api.py"
+    - "website/tests/test_ui.py"
+    - "website/pytest.ini"
+  expected_output_schema:
+    type: object
+    required: [passed_tests, failed_tests, feedback, improvement_suggestions]
+    properties:
+      passed_tests: { type: array, items: { type: string } }
+      failed_tests: { type: array, items: { type: string } }
+      feedback: { type: string }
+      improvement_suggestions: { type: array, items: { type: string } }
+  acceptance_criteria:
+    - "Tests cover /healthz, /version, and ≥1 feature route."
+    - "UI smoke via gradio_client or HTTP content checks."
+  callback: >
+    If core flows fail, list targeted fixes with owners and block evaluation.
+
+evaluation_task:
+  id: "evaluation_task"
+  depends_on: ["testing_task"]
+  agent: evaluator
+  description: >
+    Grade final product vs customer request and plan; recommend next steps.
+  expected_output_schema:
+    type: object
+    required: [overall_score, strengths, weaknesses, final_recommendations]
+    properties:
+      overall_score: { type: integer, minimum: 1, maximum: 10 }
+      strengths: { type: array, items: { type: string } }
+      weaknesses: { type: array, items: { type: string } }
+      final_recommendations: { type: array, items: { type: string } }
+  acceptance_criteria:
+    - "Score justified by tester evidence and spec fit."
+    - "Recommendations are actionable and prioritized."
+  callback: >
+    If score < 8, enumerate blocking issues and specific remediations before sign-off.

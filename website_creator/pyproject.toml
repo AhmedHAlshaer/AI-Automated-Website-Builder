@@ -1,0 +1,55 @@
+# --- pyproject.toml ---
+[project]
+name = "website-creator"
+version = "0.1.0"
+description = "CrewAI-based website generator"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "crewai>=0.65.0",
+  "pydantic>=2.8.0",
+  "pyyaml>=6.0.1",
+  "jsonschema>=4.23.0",
+  "rich>=13.7.1"
+]
+
+[project.scripts]
+website-creator = "website_creator.main:main"
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+# --- requirements.txt ---
+# Pin for reproducibility if you don't use pyproject locking
+crewai==0.65.0
+pydantic==2.8.2
+pyyaml==6.0.2
+jsonschema==4.23.0
+rich==13.7.1
+
+# --- .gitignore ---
+__pycache__/
+*.pyc
+.venv/
+.env
+artifacts/
+.website_cache/
+dist/
+.build/
+*.egg-info/
+
+# --- .env.example ---
+# Fill and copy to `.env`
+OPENAI_API_KEY=sk-...
+# Optional model controls, if you read them inside agents
+MODEL_NAME=deepseek/deepseek-chat
+
+# --- README.md ---
+# Website Creator (CrewAI)
+## Quickstart
+```bash
+python -m venv .venv && source .venv/bin/activate
+pip install -e .
+cp .env.example .env  # add your keys
+python -m website_creator.main -r "A recipe site with search, weekly planner, shopping list"
